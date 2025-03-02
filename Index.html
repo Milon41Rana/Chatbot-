@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Our Chatbot</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.3/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css?family=Roboto&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        font-family: 'Roboto', sans-serif;
+      }
+      #chatbox {
+        max-height: calc(100% - 5rem);
+        scrollbar-width: thin;
+        scrollbar-color: rgba(128, 0, 128, 0.5) transparent;
+      }
+      #chatbox::-webkit-scrollbar {
+        width: 6px;
+      }
+      #chatbox::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #chatbox::-webkit-scrollbar-thumb {
+        background-color: rgba(128, 0, 128, 0.5);
+        border-radius: 3px;
+      }
+    </style>
+</head>
+<body class="bg-blue-50 h-screen flex flex-col">
+    <header class="text-center py-3">
+        <h1 class="text-3xl font-bold">Our Chatbot</h1>
+        <p class="text-xl">Hello! How can I assist you today?</p>
+    </header>
+    <div class="flex-grow overflow-hidden">
+      <div id="chatbox" class="flex flex-col items-start bg-white px-4 py-3 rounded-lg shadow border-4 space-y-2.5 overflow-y-scroll h-full mx-4"></div>
+    </div>
+    <div class="fixed bottom-0 inset-x-0 py-2 px-4 flex flex-row mt-5 mb-4 w-full border-t border-gray-200">
+        <input class="shadow flex-grow rounded p-2 mr-2 text-black" id="messageInput" type="text" placeholder="Type your question here...">
+        <input type="file" id="imageUpload" accept="image/*" style="display: none;">
+        <button class="bg-purple-500 rounded py-2 px-4 text-white font-bold mr-2" id="sendButton">Send</button>
+        <button class="bg-green-500 rounded py-2 px-4 text-white font-bold" onclick="triggerImageUpload()">Upload Image</button>
+    </div>
+    <script>
+        const chatbox = document.getElementById("chatbox");
+        const messageInput = document.getElementById("messageInput");
+        const sendButton = document.getElementById("sendButton");
+        const imageUpload = document.getElementById("imageUpload");
+        const chatId = crypto.randomUUID();
+
+        let receiving = false;
+
+        function createMessageElement(text, alignment) {
+            const messageElement = document.createElement("div");
+            messageElement.className = `inline-block my-2.5 p-2.5 rounded-md ${
+                alignment === "left" ? "bg-purple-100 text-black" : "bg-blue-200 text-black"
+            } ${alignment === "left" ? "self-start" : "self-end"} border ${
+                alignment === "left" ? "border-purple-200" : "border-blue-300"
+            }`;
+            messageElement.textContent = text;
+            return messageElement;
+        }
+
+        function triggerImageUpload() {
+            imageUpload.click();
+        }
+
+        async function sendMessage(messageType = "text") {
+            if (receiving) return;
+            let messageText = messageInput.value.trim();
+            if (messageType === "image" && imageUpload.files.length > 0) {
+                messageText = "Uploaded an image";
+            } else if (!messageText) return;
+
+            messageInput.value = "";
+            const messageElement = createMessageElement(messageText, "right");
+            chatbox.appendChild(messageElement);
+            chatbox.scrollTop = chatbox.scrollHeight;
+
+            if (messageType === "text") {
+                await fetch('http://localhost:5000/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: messageText })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    chatbox.innerHTML += `<div class="message bot-message">Bot: ${data.reply}</div>`;
+                    chatbox.scrollTop = chatbox.scrollHeight;
+                })
+                .catch(error => console.error('Error:', error));
+            } else if (messageType === "image") {
+                const formData = new FormData();
+                formData.append("image", imageUpload.files[0]);
+                await fetch('http://localhost:5000/api/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    chatbox.innerHTML += `<div class="message bot-message">Bot: ${data.reply}</div>`;
+                    chatbox.scrollTop = chatbox.scrollHeight;
+                })
+                .catch(error => console.error('Error:', error));
+            }
+            receiving = false;
+        }
+
+        sendButton.addEventListener("click", () => sendMessage("text"));
+        messageInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !receiving && messageInput.value.trim() !== "") {
+                event.preventDefault();
+                sendButton.click();
+            }
+        });
+
+        imageUpload.addEventListener("change", () => sendMessage("image"));
+
+        function welcomeMessageFirstTime() {
+            const welcomeMessage = "Hello! I'm your chatbot assistant. What's your name?";
+            const messageElement = createMessageElement(welcomeMessage, "left");
+            chatbox.appendChild(messageElement);
+        }
+
+        welcomeMessageFirstTime();
+    </script>
+</body>
+</html>
+from flask import Flask, request, jsonify
+import requests
+import base64
+from io import BytesIO
+from PIL import Image
+
+app = Flask(__name__)
+
+# Replace with your DeepSeek R1 API Key
+API_KEY = "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"
+API_URL = "https://api.deepseek.com/v1/chat/completions"
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    message = request.json.get('message')
+    if not message:
+        return jsonify({"reply": "Please provide a message."}), 400
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "deepseek-r1",
+        "messages": [{"role": "user", "content": message}]
+    }
+
+    response = requests.post(API_URL, headers=headers, json=data)
+    if response.status_code == 200:
+        reply = response.json()['choices'][0]['message']['content']
+        return jsonify({"reply": reply})
+    else:
+        return jsonify({"reply": "Error communicating with DeepSeek API."}), 500
+
+@app.route('/api/upload', methods=['POST'])
+def upload_image():
+    if 'image' not in request.files:
+        return jsonify({"reply": "No image uploaded."}), 400
+
+    file = request.files['image']
+    img = Image.open(file.stream)
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "deepseek-r1",
+        "messages": [{"role": "user", "content": f"Describe the image: {img_str}"}]
+    }
+
+    response = requests.post(API_URL, headers=headers, json=data)
+    if response.status_code == 200:
+        reply = response.json()['choices'][0]['message']['content']
+        return jsonify({"reply": reply})
+    else:
+        return jsonify({"reply": "Error processing image with DeepSeek API."}), 500
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
+      
